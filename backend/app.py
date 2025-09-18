@@ -2,8 +2,8 @@ import os
 from typing import List
 import numpy as np
 from PIL import Image
-import tensorflow as tf
-
+# import tensorflow as tf
+import tflite_runtime.interpreter as tflite
 
 import cv2
 import numpy as np

@@ -2,7 +2,7 @@ Flask==2.3.2
 flask-cors
 gunicorn
 # tensorflow
-# tflite-runtime use id raspberry pi
+tflite-runtime 
 # tensorflow-lite
 tensorflow
 numpy
