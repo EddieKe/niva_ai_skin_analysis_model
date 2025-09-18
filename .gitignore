@@ -1,0 +1,40 @@
+# Environments - Never commit virtual environments
+backend/venv/
+backend/legacy_venv/
+
+# Large Original Models - The app uses .tflite, so these are not needed for deployment
+backend/models/acne_model/
+backend/models/skin_model/
+
+# Intermediate Model Formats - Handled by the local exclude file
+*.h5
+
+# Cache & Checkpoints - Development artifacts
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+backend/.ipynb_checkouts/
+
+# Development Scripts - Local setup, not needed for deployment
+backend/convert_models.py
+backend/convert_to_tflite.py
+backend/legacy_requirements.txt
+backend/run_local.sh
+
+# Sample Data & Temp Files
+backend/sample_images/
+backend/static/
+backend/necklace.jpg
+*.jpg
+*.png
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
+
+# Large ML Development Folder
+ML/
+
+*.keras
+*.tflite

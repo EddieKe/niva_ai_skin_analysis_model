@@ -1,0 +1,19 @@
+Flask==2.3.2
+flask-cors
+gunicorn
+# tensorflow
+tflite-runtime
+numpy
+Pillow
+opencv-python-headless
+requests
+colormath
+colorama
+packaging
+tqdm
+werkzeug
+# skin-tone-classifier
+matplotlib
+gevent
+pandas
+scikit-learn

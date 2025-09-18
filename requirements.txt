@@ -1,0 +1,14 @@
+Flask==2.0.2
+flask-cors==6.0.1
+gunicorn
+tensorflow==2.20.0
+numpy
+Pillow
+opencv-python-headless
+requests
+colormath
+colorama
+packaging
+tqdm
+werkzeug
+skin-tone-classifier==1.2.6
