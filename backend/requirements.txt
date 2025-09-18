@@ -3,7 +3,8 @@ flask-cors
 gunicorn
 # tensorflow
 # tflite-runtime use id raspberry pi
-tensorflow-lite
+# tensorflow-lite
+tensorflow
 numpy
 Pillow
 opencv-python-headless
