@@ -409,11 +409,11 @@ def analyze_skin():
             os.remove(temp_filepath)
 
 # --- Main Execution ---
-if __name__ == '__main__':
-    get_model()  # Load models only once at startup
-    # app.run(debug=True, port=5000)
-    app.run(host='0.0.0.0', port=5000, debug=False)
+get_model()  # <-- SOLUTION: Load models when the app starts
 
+if __name__ == '__main__':
+    # The app.run call is only for local development
+    app.run(host='0.0.0.0', port=5000, debug=False)
 
 @app.route('/')
 def health_check():
