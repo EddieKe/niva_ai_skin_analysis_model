@@ -82,30 +82,43 @@ CORS(app)
 interpreter1 = None
 interpreter2 = None
 
-def get_model():
-    """Loads the TFLite models and allocates tensors."""
+interpreter1 = None
+interpreter2 = None
+
+def get_interpreters():
+    """
+    Loads the TFLite models if they haven't been loaded yet,
+    and returns the interpreter instances.
+    """
     global interpreter1, interpreter2
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    model1_path = os.path.join(base_dir, 'models', 'skin_model.tflite')
-    model2_path = os.path.join(base_dir, 'models', 'acne_model.tflite')
 
-    try:
-        print(f"Attempting to load TFLite model from: {model1_path}")
-        interpreter1 = tf.lite.Interpreter(model_path=model1_path)
-        interpreter1.allocate_tensors()
-        print('✅ Skin type TFLite model loaded.')
-    except Exception as e:
-        print(f"❌ Error loading skin type TFLite model: {e}")
-        exit()
+    # Only load model 1 if it's not already in memory
+    if interpreter1 is None:
+        try:
+            model1_path = 'models/skin_model.tflite'
+            print(f"LAZY LOADING: Skin type model from: {model1_path}")
+            interpreter1 = tf.lite.Interpreter(model_path=model1_path)
+            interpreter1.allocate_tensors()
+            print('✅ Skin type TFLite model loaded.')
+        except Exception as e:
+            print(f"❌ Error loading skin type TFLite model: {e}")
+            # In a real app, you'd handle this more gracefully
+            # For now, we return None so the endpoint can fail cleanly
+            return None, None
+            
+    # Only load model 2 if it's not already in memory
+    if interpreter2 is None:
+        try:
+            model2_path = 'models/acne_model.tflite'
+            print(f"LAZY LOADING: Acne model from: {model2_path}")
+            interpreter2 = tf.lite.Interpreter(model_path=model2_path)
+            interpreter2.allocate_tensors()
+            print('✅ Acne TFLite model loaded.')
+        except Exception as e:
+            print(f"❌ Error loading acne TFLite model: {e}")
+            return interpreter1, None # Return whatever was loaded
 
-    try:
-        print(f"Attempting to load TFLite model from: {model2_path}")
-        interpreter2 = tf.lite.Interpreter(model_path=model2_path)
-        interpreter2.allocate_tensors()
-        print('✅ Acne TFLite model loaded.')
-    except Exception as e:
-        print(f"❌ Error loading acne TFLite model: {e}")
-        exit()
+    return interpreter1, interpreter2
 
 def prediction_skin(img_tensor):
     """Predicts skin type using the TFLite interpreter."""
@@ -301,6 +314,12 @@ def generate_routine(skin_type, acne_type):
 @app.route('/analyze', methods=['POST'])
 def analyze_skin():
     """Handles image upload and returns a full skin analysis with recommendations."""
+     # LAZY LOAD MODELS HERE, AT THE START OF THE REQUEST
+    interpreter1, interpreter2 = get_interpreters()
+
+     # Add a check to ensure models were loaded successfully
+    if interpreter1 is None or interpreter2 is None:
+        return jsonify({'error': 'A model failed to load on the server.'}), 500
     if 'image' not in request.files:
         return jsonify({'error': 'No image file provided'}), 400
 
@@ -409,7 +428,7 @@ def analyze_skin():
             os.remove(temp_filepath)
 
 # --- Main Execution ---
-get_model()  # <-- SOLUTION: Load models when the app starts
+# get_model()  
 
 if __name__ == '__main__':
     # The app.run call is only for local development
