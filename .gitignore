@@ -36,5 +36,3 @@ backend/necklace.jpg
 # Large ML Development Folder
 ML/
 
-*.keras
-*.tflite

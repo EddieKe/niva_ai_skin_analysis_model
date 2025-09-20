@@ -310,6 +310,7 @@ def generate_routine(skin_type, acne_type):
 
 
 
+# app.py
 
 @app.route('/analyze', methods=['POST'])
 def analyze_skin():
@@ -317,18 +318,22 @@ def analyze_skin():
         return jsonify({'error': 'No image file provided'}), 400
 
     file = request.files['image']
-    img_bytes = file.read()
-    temp_filepath = os.path.join('/tmp', secure_filename(file.filename or 'temp.png'))
-
+    
+    # Securely create a temporary file path
+    temp_filename = secure_filename(file.filename or 'temp_image.png')
+    temp_filepath = os.path.join('/tmp', temp_filename)
+    
     try:
-        # --- 1. PREPARE IMAGE VERSIONS ---
-        # Decode the image once
-        nparr = np.frombuffer(img_bytes, np.uint8)
-        img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        img_rgb_original = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        # --- 1. SAVE THE UPLOADED IMAGE ONCE ---
+        file.save(temp_filepath)
 
-        # Create a preprocessed copy FOR FACE DETECTION ONLY
-        # Color Correction & CLAHE
+        # --- 2. PRE-DETECT FACE WITH MTCNN ---
+        # Load the saved image for detection
+        img_rgb_original = cv2.cvtColor(cv2.imread(temp_filepath), cv2.COLOR_BGR2RGB)
+
+        # Create a preprocessed copy for the face detector (no changes here)
+        # ... (color correction and CLAHE logic remains the same)
+        # ...
         avg_r, avg_g, avg_b = np.mean(img_rgb_original, axis=(0, 1))
         avg_gray = (avg_r + avg_g + avg_b) / 3
         scale_r, scale_g, scale_b = avg_gray / avg_r, avg_gray / avg_g, avg_gray / avg_b
@@ -337,37 +342,38 @@ def analyze_skin():
         corrected_img[:, :, 1] = np.clip(corrected_img[:, :, 1] * scale_g, 0, 255)
         corrected_img[:, :, 2] = np.clip(corrected_img[:, :, 2] * scale_b, 0, 255)
         img_lab = cv2.cvtColor(corrected_img.astype(np.uint8), cv2.COLOR_RGB2LAB)
-        l_channel, _, _ = cv2.split(img_lab)
+        l_channel, a_channel, b_channel = cv2.split(img_lab)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         cl = clahe.apply(l_channel)
-        processed_for_detection = cv2.cvtColor(cv2.merge([cl, img_lab[:,:,1], img_lab[:,:,2]]), cv2.COLOR_LAB2RGB)
+        merged = cv2.merge([cl, a_channel, b_channel])
+        processed_for_detection = cv2.cvtColor(merged, cv2.COLOR_LAB2RGB)
+        
+        faces = detector.detect_faces(processed_for_detection)
+        if not faces:
+            return jsonify({'error': 'Could not detect a face. Please try a different photo with clearer lighting.'}), 400
 
-        # --- 2. RUN SKIN TYPE & ACNE ANALYSIS (ON ORIGINAL IMAGE) ---
+        # --- 3. RUN ALL AI ANALYSES ---
+        # Load TFLite interpreters
         interpreter1, interpreter2 = get_interpreters()
         if interpreter1 is None or interpreter2 is None:
             return jsonify({'error': 'A model failed to load on the server.'}), 500
-
-        # Pass the ORIGINAL bytes to the loader for these models
-        img_tensor = load_image_for_tf(img_bytes)
+        
+        # A. Skin Type and Acne Analysis
+        # Read the saved file bytes for these models
+        with open(temp_filepath, 'rb') as f:
+            img_bytes_for_tf = f.read()
+        img_tensor = load_image_for_tf(img_bytes_for_tf)
         
         skin_type_classes = ['Dry', 'Normal', 'Oily']
         skin_probs = prediction_skin(img_tensor).numpy()
         skin_type = skin_type_classes[np.argmax(skin_probs)]
-        # ... your combination logic here ...
-
+        
         acne_classes = ['Low', 'Moderate', 'Severe']
         acne_probs = prediction_acne(img_tensor).numpy()
         acne_analysis = {'label': acne_classes[np.argmax(acne_probs)]}
 
-
-        # --- 3. RUN SKIN TONE ANALYSIS (ON PREPROCESSED IMAGE) ---
-        # Save the preprocessed image temporarily for the stone library
-        cv2.imwrite(temp_filepath, cv2.cvtColor(processed_for_detection, cv2.COLOR_RGB2BGR))
-        
+        # B. Skin Tone Analysis (use the path to the saved file)
         results = stone_process(temp_filepath, return_report_image=False)
-        if not results or not results.get('faces'):
-            return jsonify({'error': 'Could not detect a face for skin tone analysis.'}), 400
-
         face_data = results['faces'][0]
         skin_tone_info = {
             'color_hex': face_data.get('skin_tone'),
@@ -377,7 +383,7 @@ def analyze_skin():
         
         # --- 4. GENERATE RECOMMENDATIONS AND RESPONSE ---
         skincare_routine = generate_routine(skin_type, acne_analysis['label'])
-        # ... your other recommendation logic ...
+        makeup_recs = makeup_recommendation(skin_tone_info.get('label'), skin_type)
 
         response_data = {
             'analysis': {
@@ -386,13 +392,16 @@ def analyze_skin():
                 'skin_tone': skin_tone_info
             },
             'recommendations': {
-                'skincare_routine': skincare_routine
+                'skincare_routine': skincare_routine,
+                'makeup': makeup_recs
             }
         }
         return jsonify(response_data), 200
 
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        # Add traceback for better debugging on Render
+        import traceback
+        print(f"An unexpected error occurred: {e}\n{traceback.format_exc()}")
         return jsonify({'error': 'An unexpected error occurred during analysis.'}), 500
     finally:
         # Cleanup the temporary file
