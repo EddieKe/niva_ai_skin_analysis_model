@@ -378,6 +378,7 @@ def analyze_skin():
         skin_tone_info = {
             'color_hex': face_data.get('skin_tone'),
             'label': face_data.get('tone_label'),
+            'accuracy': face_data.get('accuracy', 0.0),
             'dominant_colors': face_data.get('dominant_colors', [])
         }
         
