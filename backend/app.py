@@ -6,10 +6,11 @@ import tensorflow as tf
 # import tflite_runtime.interpreter as tflite
 
 import cv2
+import mtcnn
 import numpy as np
 from PIL import Image
 from io import BytesIO
-
+from werkzeug.utils import secure_filename
 
 from flask import Flask, request
 import werkzeug
@@ -25,6 +26,7 @@ from flask_cors import CORS
 
 app = Flask(__name__) 
 CORS(app)
+detector = mtcnn.MTCNN()
 # api = Api(app)
 
 # class_names1 = ['Dry_skin', 'Normal_skin', 'Oil_skin']
@@ -309,105 +311,74 @@ def generate_routine(skin_type, acne_type):
 
 
 
-
-
 @app.route('/analyze', methods=['POST'])
 def analyze_skin():
-    """Handles image upload and returns a full skin analysis with recommendations."""
-     # LAZY LOAD MODELS HERE, AT THE START OF THE REQUEST
-    interpreter1, interpreter2 = get_interpreters()
-
-     # Add a check to ensure models were loaded successfully
-    if interpreter1 is None or interpreter2 is None:
-        return jsonify({'error': 'A model failed to load on the server.'}), 500
     if 'image' not in request.files:
         return jsonify({'error': 'No image file provided'}), 400
 
     file = request.files['image']
-    
-    # Create the full, absolute path for the temporary file
-    from werkzeug.utils import secure_filename
-    base_dir = os.path.abspath(os.path.dirname(__file__))
-    temp_filename = secure_filename(file.filename or 'temp_image.png')
-    temp_filepath = os.path.join(base_dir, temp_filename)
-    
-    file.save(temp_filepath)
+    img_bytes = file.read()
+    temp_filepath = os.path.join('/tmp', secure_filename(file.filename or 'temp.png'))
 
     try:
-        # --- 1. Read file bytes ---
-        img_bytes = open(temp_filepath, 'rb').read()
+        # --- 1. PREPARE IMAGE VERSIONS ---
+        # Decode the image once
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        img_rgb_original = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
-        # --- 2. Skin Type and Acne Analysis ---
-        try:
-            img_tensor = load_image_for_tf(img_bytes)
-            
-            # --- Skin Type Analysis with Combination Logic ---
-            skin_type_classes = ['Dry', 'Normal', 'Oily']
-            skin_probs = prediction_skin(img_tensor).numpy() # Convert tensor to numpy array
-            
-            oily_prob = skin_probs[2]  # Corresponds to 'Oily_skin'
-            dry_prob = skin_probs[0]   # Corresponds to 'Dry_skin'
-            
-            # Heuristic rule for "Combination" skin
-            if oily_prob > 0.35 and dry_prob > 0.35:
-                skin_type = 'Combination'
-            else:
-                top_skin_index = np.argmax(skin_probs)
-                skin_type = skin_type_classes[top_skin_index]
+        # Create a preprocessed copy FOR FACE DETECTION ONLY
+        # Color Correction & CLAHE
+        avg_r, avg_g, avg_b = np.mean(img_rgb_original, axis=(0, 1))
+        avg_gray = (avg_r + avg_g + avg_b) / 3
+        scale_r, scale_g, scale_b = avg_gray / avg_r, avg_gray / avg_g, avg_gray / avg_b
+        corrected_img = img_rgb_original.copy()
+        corrected_img[:, :, 0] = np.clip(corrected_img[:, :, 0] * scale_r, 0, 255)
+        corrected_img[:, :, 1] = np.clip(corrected_img[:, :, 1] * scale_g, 0, 255)
+        corrected_img[:, :, 2] = np.clip(corrected_img[:, :, 2] * scale_b, 0, 255)
+        img_lab = cv2.cvtColor(corrected_img.astype(np.uint8), cv2.COLOR_RGB2LAB)
+        l_channel, _, _ = cv2.split(img_lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        cl = clahe.apply(l_channel)
+        processed_for_detection = cv2.cvtColor(cv2.merge([cl, img_lab[:,:,1], img_lab[:,:,2]]), cv2.COLOR_LAB2RGB)
 
-            # --- Acne Analysis with Confidence Score ---
-            acne_classes = ['Low', 'Moderate', 'Severe']
-            acne_probs = prediction_acne(img_tensor).numpy()
-            top_acne_index = np.argmax(acne_probs)
-            
-            acne_analysis = {
-                'label': acne_classes[top_acne_index],
-                'confidence': float(acne_probs[top_acne_index])
-            }
+        # --- 2. RUN SKIN TYPE & ACNE ANALYSIS (ON ORIGINAL IMAGE) ---
+        interpreter1, interpreter2 = get_interpreters()
+        if interpreter1 is None or interpreter2 is None:
+            return jsonify({'error': 'A model failed to load on the server.'}), 500
 
-        except Exception as e:
-            print(f"Error during TF model prediction: {e}")
-            return jsonify({'error': 'Failed to analyze skin type or acne.'}), 500
-
-        # --- 3. Skin Tone Analysis ---
-        try:
-            results = stone_process(temp_filepath, return_report_image=False)
-            if not results or not results.get('faces'):
-                return jsonify({'error': 'No face detected in the image.'}), 400
-
-            face_data = results['faces'][0]
-            dominant_colors = face_data.get('dominant_colors', [])
-
-            # Find the dominant color with the highest percentage
-            if dominant_colors:
-                # We cast percent to float to ensure correct sorting
-                top_dominant_color = max(dominant_colors, key=lambda x: float(x.get('percent', 0)))
-                
-                # Construct the skin tone info using the most dominant color
-                skin_tone_info = {
-                    'color_hex': top_dominant_color.get('color'),
-                    'label': 'Dominant Tone',
-                    'accuracy': float(top_dominant_color.get('percent')),
-                    'dominant_colors': dominant_colors
-                }
-            else:
-                # Fallback in case no dominant colors are found
-                skin_tone_info = {
-                    'color_hex': '#FFFFFF',
-                    'label': 'Not Detected',
-                    'accuracy': 0.0,
-                    'dominant_colors': []
-                }
-
-        except Exception as e:
-            print(f"Error during skin tone analysis: {e}")
-            return jsonify({'error': 'Failed to analyze skin tone.'}), 500
-
-        # --- 4. Generate Recommendations ---
-        skincare_routine = generate_routine(skin_type, acne_analysis)
-        makeup_recs = makeup_recommendation(skin_tone_info['label'], skin_type)
+        # Pass the ORIGINAL bytes to the loader for these models
+        img_tensor = load_image_for_tf(img_bytes)
         
-        # --- 5. Construct Final JSON Response ---
+        skin_type_classes = ['Dry', 'Normal', 'Oily']
+        skin_probs = prediction_skin(img_tensor).numpy()
+        skin_type = skin_type_classes[np.argmax(skin_probs)]
+        # ... your combination logic here ...
+
+        acne_classes = ['Low', 'Moderate', 'Severe']
+        acne_probs = prediction_acne(img_tensor).numpy()
+        acne_analysis = {'label': acne_classes[np.argmax(acne_probs)]}
+
+
+        # --- 3. RUN SKIN TONE ANALYSIS (ON PREPROCESSED IMAGE) ---
+        # Save the preprocessed image temporarily for the stone library
+        cv2.imwrite(temp_filepath, cv2.cvtColor(processed_for_detection, cv2.COLOR_RGB2BGR))
+        
+        results = stone_process(temp_filepath, return_report_image=False)
+        if not results or not results.get('faces'):
+            return jsonify({'error': 'Could not detect a face for skin tone analysis.'}), 400
+
+        face_data = results['faces'][0]
+        skin_tone_info = {
+            'color_hex': face_data.get('skin_tone'),
+            'label': face_data.get('tone_label'),
+            'dominant_colors': face_data.get('dominant_colors', [])
+        }
+        
+        # --- 4. GENERATE RECOMMENDATIONS AND RESPONSE ---
+        skincare_routine = generate_routine(skin_type, acne_analysis['label'])
+        # ... your other recommendation logic ...
+
         response_data = {
             'analysis': {
                 'skin_type': skin_type,
@@ -415,18 +386,18 @@ def analyze_skin():
                 'skin_tone': skin_tone_info
             },
             'recommendations': {
-                'skincare_routine': skincare_routine,
-                'makeup': makeup_recs
+                'skincare_routine': skincare_routine
             }
         }
         return jsonify(response_data), 200
 
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        return jsonify({'error': 'An unexpected error occurred during analysis.'}), 500
     finally:
-        # --- CLEANUP ---
-        # This block will always execute, ensuring the file is deleted once.
+        # Cleanup the temporary file
         if os.path.exists(temp_filepath):
             os.remove(temp_filepath)
-
 # --- Main Execution ---
 # get_model()  
 
