@@ -373,14 +373,38 @@ def analyze_skin():
         acne_analysis = {'label': acne_classes[np.argmax(acne_probs)]}
 
         # B. Skin Tone Analysis (use the path to the saved file)
-        results = stone_process(temp_filepath, return_report_image=False)
-        face_data = results['faces'][0]
-        skin_tone_info = {
-            'color_hex': face_data.get('skin_tone'),
-            'label': face_data.get('tone_label'),
-            'accuracy': face_data.get('accuracy', 0.0),
-            'dominant_colors': face_data.get('dominant_colors', [])
-        }
+        try:
+            results = stone_process(temp_filepath, return_report_image=False)
+            if not results or not results.get('faces'):
+                return jsonify({'error': 'No face detected in the image.'}), 400
+
+            face_data = results['faces'][0]
+            dominant_colors = face_data.get('dominant_colors', [])
+
+            # Find the dominant color with the highest percentage
+            if dominant_colors:
+                # We cast percent to float to ensure correct sorting
+                top_dominant_color = max(dominant_colors, key=lambda x: float(x.get('percent', 0)))
+                
+                # Construct the skin tone info using the most dominant color
+                skin_tone_info = {
+                    'color_hex': top_dominant_color.get('color'),
+                    'label': 'Dominant Tone',
+                    'accuracy': float(top_dominant_color.get('percent')),
+                    'dominant_colors': dominant_colors
+                }
+            else:
+                # Fallback in case no dominant colors are found
+                skin_tone_info = {
+                    'color_hex': '#FFFFFF',
+                    'label': 'Not Detected',
+                    'accuracy': 0.0,
+                    'dominant_colors': []
+                }
+
+        except Exception as e:
+            print(f"Error during skin tone analysis: {e}")
+            return jsonify({'error': 'Failed to analyze skin tone.'}), 500
         
         # --- 4. GENERATE RECOMMENDATIONS AND RESPONSE ---
         skincare_routine = generate_routine(skin_type, acne_analysis['label'])
